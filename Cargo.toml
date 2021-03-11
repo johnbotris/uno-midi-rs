@@ -1,5 +1,5 @@
 [package]
-name = "midi1rs"
+name = "uno-midi-rs"
 version = "0.1.0"
 authors = ["John <me@johnbotr.is>"]
 edition = "2018"
