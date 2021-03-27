@@ -1,5 +1,5 @@
 [package]
-name = "uno-midi-rs"
+name = "midi1"
 version = "0.1.0"
 authors = ["John <me@johnbotr.is>"]
 edition = "2018"
@@ -8,6 +8,9 @@ edition = "2018"
 
 [dependencies]
 panic-halt = "0.2.0"
+ufmt = "0.1.0"
+nb = "0.1.2"
+avr-device = {version = "0.3", features = ["atmega328p"]}
 
 [dependencies.arduino-uno]
 git = "https://github.com/Rahix/avr-hal"
@@ -24,3 +27,6 @@ codegen-units = 1
 debug = true
 lto = true
 opt-level = "s"
+
+[target.'cfg(target_arch = "avr")']
+runner = "./uno-runner.sh"
