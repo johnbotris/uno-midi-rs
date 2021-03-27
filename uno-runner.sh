@@ -1,6 +1,11 @@
 #!/usr/bin/env sh
 set -e
 
+
+# Try switching these if it's not workin
+# LINUX_SERIAL="/dev/ttyACM0"
+LINUX_SERIAL="/dev/ttyACM1"
+
 case "$(uname -s)" in
     Linux*)     OS="Linux";;
     Darwin*)    OS="Mac";;
@@ -22,12 +27,12 @@ then
 fi
 
 if [ $OS = "Linux" ]; then
-    SERIAL_PORT="/dev/ttyACM0"
+    SERIAL_PORT="/dev/ttyACM1"
 elif [ $OS = "Mac" ]; then
     SERIAL_PORT="/dev/cu.usbmodem146201"
 else
     echo "unsupported OS, things might not work" >&2
-    SERIAL_PORT="/dev/ttyACM0"
+    SERIAL_PORT="/dev/ttyACM1"
 fi
 
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
