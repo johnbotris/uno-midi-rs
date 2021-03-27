@@ -104,10 +104,4 @@ fn main() -> ! {
             note_on(&mut serial, channel, this_step.pitch, this_step.velocity);
         }
     }
-
-    note_off(
-        &mut serial,
-        channel,
-        if is_on { on.pitch } else { off.pitch },
-    );
 }
