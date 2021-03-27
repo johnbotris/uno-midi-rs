@@ -16,6 +16,10 @@ avr-device = {version = "0.3", features = ["atmega328p"]}
 git = "https://github.com/Rahix/avr-hal"
 rev = "a20277873a8102998d5fd69743771bd8c0aa9423"
 
+[dependencies.avr-hal-generic]
+git = "https://github.com/Rahix/avr-hal"
+rev = "a20277873a8102998d5fd69743771bd8c0aa9423"
+
 [profile.dev]
 panic = "abort"
 lto = true
