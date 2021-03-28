@@ -4,7 +4,6 @@
 #![feature(abi_avr_interrupt)]
 
 mod millis;
-mod patterns;
 
 extern crate ufmt;
 
@@ -15,7 +14,6 @@ use arduino_uno::{delay_ms, Peripherals, Pins, Serial};
 use avr_hal_generic::usart::{Usart, UsartOps};
 
 use millis::*;
-use patterns::*;
 
 const DEFAULT_BAUD_RATE: u32 = 9600;
 const MIDI_BAUD_RATE: u32 = 31250;
@@ -133,6 +131,7 @@ fn main() -> ! {
                     // Modulo of the target step
                     // Note to self, we can't use u32/i32 because it breaks modulo:
                     // https://github.com/rust-lang/rust/issues/82242
+                    // see: further down
                     let target_step = {
                         let c = current_step as i16 - (rotation + 1);
                         let m = steps as i16;
@@ -159,12 +158,12 @@ fn main() -> ! {
                 current_step = 0;
             }
 
-            let this_step = if is_on { &on } else { &off };
-            note_on(&mut serial, channel, this_step.pitch, this_step.velocity);
-
             if let Some(&StepParams { pitch, .. }) = last_step {
                 note_off(&mut serial, channel, pitch);
             }
+
+            let this_step = if is_on { &on } else { &off };
+            note_on(&mut serial, channel, this_step.pitch, this_step.velocity);
 
             last_step = Some(this_step);
         }
