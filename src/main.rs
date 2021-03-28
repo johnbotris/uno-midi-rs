@@ -70,7 +70,7 @@ fn main() -> ! {
     let channel = 0;
 
     let bpm = 120.0;
-    let multiplier = (1.0, 6.0);
+    let multiplier = (1.0, 4.0);
 
     let on = StepParams {
         pitch: 0x24,
@@ -80,7 +80,7 @@ fn main() -> ! {
 
     let off = StepParams {
         pitch: 0x20,
-        velocity: 0x2f,
+        velocity: 0x0f,
         // TODO Send note off actual gate close
         gate: 1.0,
     };
@@ -102,15 +102,15 @@ fn main() -> ! {
         if now - step_start >= step_length_ms as u32 {
             step_start = now;
 
-            let steps = 3;
-            let onsets = 1;
+            let steps = 10;
+            let onsets = 3;
             let rotation = 0;
 
             // Do euclidean rhythm algorithm
             is_on = {
                 if steps == 0 || onsets == 0 {
                     false
-                } else if onsets == steps {
+                } else if onsets >= steps {
                     true
                 } else {
                     // Modulo of the target step
