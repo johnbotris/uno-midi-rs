@@ -10,7 +10,6 @@
 
 use arduino_uno::prelude::*;
 use core::cell;
-use panic_halt as _;
 
 // Possible Values:
 //

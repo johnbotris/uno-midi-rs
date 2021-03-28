@@ -4,7 +4,7 @@ set -e
 
 # Try switching these if it's not workin
 # LINUX_SERIAL="/dev/ttyACM0"
-LINUX_SERIAL="/dev/ttyACM1"
+SERIAL="/dev/ttyACM0"
 
 case "$(uname -s)" in
     Linux*)     OS="Linux";;
@@ -27,12 +27,12 @@ then
 fi
 
 if [ $OS = "Linux" ]; then
-    SERIAL_PORT="/dev/ttyACM1"
+    SERIAL_PORT="$SERIAL"
 elif [ $OS = "Mac" ]; then
     SERIAL_PORT="/dev/cu.usbmodem146201"
 else
     echo "unsupported OS, things might not work" >&2
-    SERIAL_PORT="/dev/ttyACM1"
+    SERIAL_PORT="$SERIAL"
 fi
 
 if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then

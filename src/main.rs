@@ -3,11 +3,9 @@
 // required by millis
 #![feature(abi_avr_interrupt)]
 
-mod maths;
 mod millis;
 mod patterns;
 
-extern crate panic_halt;
 extern crate ufmt;
 
 use arduino_uno::hal::port::mode::Output;
@@ -17,6 +15,7 @@ use arduino_uno::{delay_ms, Peripherals, Pins, Serial};
 use avr_hal_generic::usart::{Usart, UsartOps};
 
 use millis::*;
+use patterns::*;
 
 const DEFAULT_BAUD_RATE: u32 = 9600;
 const MIDI_BAUD_RATE: u32 = 31250;
@@ -49,6 +48,27 @@ where
     serial.write_byte(0);
 }
 
+#[panic_handler]
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    let mut serial: arduino_uno::Serial<arduino_uno::hal::port::mode::Floating> =
+        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+
+    ufmt::uwriteln!(&mut serial, "Firmware panic!\r").void_unwrap();
+
+    if let Some(loc) = info.location() {
+        ufmt::uwriteln!(
+            &mut serial,
+            "  At {}:{}:{}\r",
+            loc.file(),
+            loc.line(),
+            loc.column(),
+        )
+        .void_unwrap();
+    }
+
+    loop {}
+}
+
 #[arduino_uno::entry]
 fn main() -> ! {
     let dp = Peripherals::take().unwrap();
@@ -70,14 +90,14 @@ fn main() -> ! {
     let multiplier = (1.0, 2.0);
 
     let on = StepParams {
-        pitch: 32,
-        velocity: 0x45,
+        pitch: 0x34,
+        velocity: 0x7f,
         gate: 1.0,
     };
 
     let off = StepParams {
-        pitch: 32,
-        velocity: 0,
+        pitch: 0x36,
+        velocity: 0x7f,
         gate: 1.0,
     };
 
@@ -85,6 +105,8 @@ fn main() -> ! {
 
     let mut step_start = millis();
     let mut is_on = true;
+    let mut current_step: u16 = 0;
+    let mut last_step = None;
 
     loop {
         let now = millis();
@@ -92,16 +114,59 @@ fn main() -> ! {
         let beats_per_second = bpm / 60.0;
         let beat_length_ms = 1000.0 / beats_per_second;
         let step_length_ms = beat_length_ms * (multiplier.0 / multiplier.1);
+        let step_length_ms = 1000.0;
 
-        // ufmt::uwriteln!(&mut serial, "now = {}\r", now).void_unwrap();
         if now - step_start >= step_length_ms as u32 {
-            is_on = !is_on;
             step_start = now;
 
-            let (last_step, this_step) = if is_on { (&off, &on) } else { (&on, &off) };
+            let steps = 7;
+            let onsets = 4;
+            let rotation = 0;
 
-            note_off(&mut serial, channel, last_step.pitch);
+            // Do euclidean rhythm algorithm
+            is_on = {
+                if steps == 0 || onsets == 0 {
+                    false
+                } else if onsets == steps {
+                    true
+                } else {
+                    // Modulo of the target step
+                    // Note to self, we can't use u32/i32 because it breaks modulo:
+                    // https://github.com/rust-lang/rust/issues/82242
+                    let target_step = {
+                        let c = current_step as i16 - (rotation + 1);
+                        let m = steps as i16;
+                        let modulo = ((c % m) + m) % m;
+                        modulo
+                    };
+                    let mut bucket = 0;
+                    let mut is_on = false;
+                    for _ in 0..=target_step {
+                        is_on = false;
+                        bucket += onsets;
+                        if bucket >= steps {
+                            bucket -= steps;
+                            is_on = true
+                        }
+                    }
+                    is_on
+                }
+            };
+
+            // can't use modulo because of https://github.com/rust-lang/rust/issues/82242
+            current_step += 1;
+            if current_step >= steps {
+                current_step = 0;
+            }
+
+            let this_step = if is_on { &on } else { &off };
             note_on(&mut serial, channel, this_step.pitch, this_step.velocity);
+
+            if let Some(&StepParams { pitch, .. }) = last_step {
+                note_off(&mut serial, channel, pitch);
+            }
+
+            last_step = Some(this_step);
         }
     }
 }
