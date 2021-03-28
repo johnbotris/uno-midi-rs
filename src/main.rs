@@ -48,22 +48,7 @@ where
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    let mut serial: arduino_uno::Serial<arduino_uno::hal::port::mode::Floating> =
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
-
-    ufmt::uwriteln!(&mut serial, "Firmware panic!\r").void_unwrap();
-
-    if let Some(loc) = info.location() {
-        ufmt::uwriteln!(
-            &mut serial,
-            "  At {}:{}:{}\r",
-            loc.file(),
-            loc.line(),
-            loc.column(),
-        )
-        .void_unwrap();
-    }
-
+    // TODO Sent note offs or something?
     loop {}
 }
 
@@ -85,17 +70,18 @@ fn main() -> ! {
     let channel = 0;
 
     let bpm = 120.0;
-    let multiplier = (1.0, 2.0);
+    let multiplier = (1.0, 6.0);
 
     let on = StepParams {
-        pitch: 0x34,
+        pitch: 0x24,
         velocity: 0x7f,
         gate: 1.0,
     };
 
     let off = StepParams {
-        pitch: 0x36,
-        velocity: 0x7f,
+        pitch: 0x20,
+        velocity: 0x2f,
+        // TODO Send note off actual gate close
         gate: 1.0,
     };
 
@@ -112,13 +98,12 @@ fn main() -> ! {
         let beats_per_second = bpm / 60.0;
         let beat_length_ms = 1000.0 / beats_per_second;
         let step_length_ms = beat_length_ms * (multiplier.0 / multiplier.1);
-        let step_length_ms = 1000.0;
 
         if now - step_start >= step_length_ms as u32 {
             step_start = now;
 
-            let steps = 7;
-            let onsets = 4;
+            let steps = 3;
+            let onsets = 1;
             let rotation = 0;
 
             // Do euclidean rhythm algorithm
@@ -152,11 +137,7 @@ fn main() -> ! {
                 }
             };
 
-            // can't use modulo because of https://github.com/rust-lang/rust/issues/82242
-            current_step += 1;
-            if current_step >= steps {
-                current_step = 0;
-            }
+            current_step = (current_step + 1) % steps;
 
             if let Some(&StepParams { pitch, .. }) = last_step {
                 note_off(&mut serial, channel, pitch);
