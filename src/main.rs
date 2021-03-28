@@ -41,7 +41,7 @@ fn note_off<USART, RX, TX, CLOCK>(serial: &mut Usart<USART, RX, TX, CLOCK>, chan
 where
     USART: UsartOps<RX, TX>,
 {
-    serial.write_byte(0x90 + channel);
+    serial.write_byte(0x80 + channel);
     serial.write_byte(pitch);
     serial.write_byte(0);
 }
