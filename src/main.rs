@@ -3,91 +3,95 @@
 // required by millis
 #![feature(abi_avr_interrupt)]
 
+mod hardware;
 mod millis;
 
 extern crate ufmt;
 
-use core::cell::RefCell;
+use core::{
+    cell::RefCell,
+    ops::{Div, Mul},
+};
 
 use arduino_uno::adc::{self, Adc};
 use arduino_uno::hal::port::mode::Output;
 use arduino_uno::hal::port::portb::PB5;
 use arduino_uno::prelude::*;
 use arduino_uno::{delay_ms, Peripherals, Pins, Serial};
-use avr_hal_generic::usart::{Usart, UsartOps};
+use avr_hal_generic::{
+    port::mode::Floating,
+    usart::{Usart, UsartOps},
+};
 
+use hardware::*;
 use millis::*;
 
 const DEFAULT_BAUD_RATE: u32 = 9600;
 const MIDI_BAUD_RATE: u32 = 31250;
-
 const ANALOG_IN_MAX: u16 = 1024;
-
-const MAX_STEPS: u16 = 24;
+const MAX_STEPS: u16 = 16;
 
 #[arduino_uno::entry]
 fn main() -> ! {
-    let dp = Peripherals::take().unwrap();
+    let mut hardware: RefCell<Hardware> =
+        RefCell::new(Hardware::new(MIDI_BAUD_RATE.into_baudrate()));
 
-    millis_init(dp.TC0);
-
-    let mut pins = Pins::new(dp.PORTB, dp.PORTC, dp.PORTD);
-
-    let baud_rate = DEFAULT_BAUD_RATE;
-
-    let mut serial = RefCell::new(Serial::new(
-        dp.USART0,
-        pins.d0,
-        pins.d1.into_output(&mut pins.ddr),
-        baud_rate.into_baudrate(),
-    ));
-
-    let mut adc: RefCell<Adc> = RefCell::new(Adc::new(dp.ADC, Default::default()));
-
-    macro_rules! analog_read {
-        ($pin:expr) => {{
-            let value: u16 = nb::block!(adc.borrow_mut().read(&mut $pin)).void_unwrap();
-            value
-        }};
-    }
+    millis_init(hardware.borrow_mut().tc0());
 
     let rotation = 0;
     let channel = 0;
     let bpm = 120.0;
 
-    let mut a0 = { pins.a0.into_analog_input(&mut adc.borrow_mut()) };
     let mut get_multiplier = {
         || {
             let multipliers = [(1, 1), (1, 2), (1, 3), (1, 4)];
-            let idx = map_analog_value(analog_read!(a0), multipliers.len() as u16);
+            let idx = map_analog_value(hardware.borrow_mut().read_a0(), multipliers.len() as u16);
             multipliers[idx as usize]
         }
     };
-
-    let mut a1 = { pins.a1.into_analog_input(&mut adc.borrow_mut()) };
     let mut get_levels = || {
-        let reading = (map_analog_value(analog_read!(a1), 64)) as u8;
-        (reading, 64 - reading)
+        let half_analog_limit = 1024 / 2;
+        let reading = hardware.borrow_mut().read_a1();
+
+        // pot further to the left:  on is max, off is max - half_analog_limit - reading
+        // pot further to the right: off is max, on is max - reading - half_analog_limit
+        // pot in the middle: both on and off have the same level (for simplicity we include this in "further to the left"
+
+        if reading < half_analog_limit {
+            // further to the left
+            (
+                127u8,
+                // this just falls short of u16::MAX, be careful
+                127 - map_range(half_analog_limit - reading, half_analog_limit, 127) as u8,
+            )
+        } else if reading > half_analog_limit {
+            // further to the right
+            (
+                127 - map_range(reading - half_analog_limit, half_analog_limit, 127) as u8,
+                127u8,
+            )
+        } else {
+            // the same
+            (127u8, 127u8)
+        }
     };
 
-    let mut a2 = { pins.a2.into_analog_input(&mut adc.borrow_mut()) };
-    let mut get_num_steps = || map_analog_value(analog_read!(a2), MAX_STEPS);
+    let mut get_num_steps = || map_analog_value(hardware.borrow_mut().read_a2(), MAX_STEPS);
 
-    let mut a3 = { pins.a3.into_analog_input(&mut adc.borrow_mut()) };
-    let mut get_num_onsets = || map_analog_value(analog_read!(a3), MAX_STEPS);
+    let mut get_num_onsets = || map_analog_value(hardware.borrow_mut().read_a3(), MAX_STEPS);
 
     let mut get_step = |num_steps, num_onsets, current_step| {
         let (on_level, off_level) = get_levels();
         let is_on = euclidean(num_steps, num_onsets, 0, current_step);
         if is_on {
             StepParams {
-                pitch: 32,
+                pitch: 30,
                 velocity: on_level,
                 gate: 0.5,
             }
         } else {
             StepParams {
-                pitch: 30,
+                pitch: 42,
                 velocity: off_level,
                 gate: 0.5,
             }
@@ -95,15 +99,17 @@ fn main() -> ! {
     };
 
     let mut note_on = |pitch, velocity| {
-        serial.borrow_mut().write_byte(0x90 + channel);
-        serial.borrow_mut().write_byte(pitch);
-        serial.borrow_mut().write_byte(velocity);
+        let mut hardware = hardware.borrow_mut();
+        hardware.write_byte(0x90 + channel);
+        hardware.write_byte(pitch);
+        hardware.write_byte(velocity);
     };
 
     let mut note_off = |pitch| {
-        serial.borrow_mut().write_byte(0x80 + channel);
-        serial.borrow_mut().write_byte(pitch);
-        serial.borrow_mut().write_byte(0);
+        let mut hardware = hardware.borrow_mut();
+        hardware.write_byte(0x80 + channel);
+        hardware.write_byte(pitch);
+        hardware.write_byte(0);
     };
 
     // Do first step straight away
@@ -143,16 +149,17 @@ fn main() -> ! {
             let this_step_params = get_step(num_steps, num_onsets, step_counter);
             note_on(this_step_params.pitch, this_step_params.velocity);
 
-            ufmt::uwriteln!(
-                serial.borrow_mut(),
-                "num_steps={} num_onsets={} step_counter={} multiplier0={} multiplier1={} step_level={}\r",
-                num_steps,
-                num_onsets,
-                step_counter,
-                multiplier.0,
-                multiplier.1,
-                this_step_params.velocity
-            );
+            // ufmt::uwrite!(hardware.borrow_mut(), "\r                                                                                                                       \r");
+            // ufmt::uwrite!(
+            //     hardware.borrow_mut(),
+            //     "num_steps={} num_onsets={} step_counter={} multiplier0={} multiplier1={} step_level={}",
+            //     num_steps,
+            //     num_onsets,
+            //     step_counter,
+            //     multiplier.0,
+            //     multiplier.1,
+            //     this_step_params.velocity
+            // );
 
             previous_step_params = this_step_params;
         }
@@ -185,6 +192,13 @@ fn euclidean(steps: u16, onsets: u16, rotation: i16, current_step: u16) -> bool 
     }
 }
 
+fn map_range<T>(val: T, from: T, to: T) -> T
+where
+    T: Mul + Mul<Output = T> + Div + Div<Output = T>,
+{
+    val * to / from
+}
+
 fn map_analog_value(val: u16, range: u16) -> u16 {
     val * range / ANALOG_IN_MAX
 }
@@ -200,20 +214,18 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     let mut serial: arduino_uno::Serial<arduino_uno::hal::port::mode::Floating> =
         unsafe { core::mem::MaybeUninit::uninit().assume_init() };
 
-    ufmt::uwriteln!(&mut serial, "Firmware panic!\r").void_unwrap();
+    // ufmt::uwriteln!(&mut serial, "Firmware panic!\r").void_unwrap();
 
-    if let Some(loc) = info.location() {
-        ufmt::uwriteln!(
-            &mut serial,
-            "  At {}:{}:{}\r",
-            loc.file(),
-            loc.line(),
-            loc.column(),
-        )
-        .void_unwrap();
-    }
+    // if let Some(loc) = info.location() {
+    //     ufmt::uwriteln!(
+    //         &mut serial,
+    //         "  At {}:{}:{}\r",
+    //         loc.file(),
+    //         loc.line(),
+    //         loc.column(),
+    //     )
+    //     .void_unwrap();
+    // }
 
-    loop {
-        ufmt::uwriteln!(serial, "im dead\r");
-    }
+    loop {}
 }
