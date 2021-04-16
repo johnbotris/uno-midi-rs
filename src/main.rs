@@ -20,6 +20,15 @@ const MIDI_BAUD_RATE: u32 = 31250;
 const ANALOG_IN_MAX: u16 = 1024;
 const MAX_STEPS: u16 = 16;
 
+const MULTIPLIER_CHANNEL: U4 = U4::ZERO;
+const LEVELS_CHANNEL: U4 = U4::ONE;
+const STEPS_CHANNEL: U4 = U4::TWO;
+const ONSETS_CHANNEL: U4 = U4::THREE;
+const TEMPO_CHANNEL: U4 = U4::FOUR;
+const ON_PITCH_CHANNEL: U4 = U4::FIVE;
+const OFF_PITCH_CHANNEL: U4 = U4::SIX;
+const GATE_CHANNEL: U4 = U4::SEVEN;
+
 #[arduino_uno::entry]
 fn main() -> ! {
     let mut hardware: Hardware = Hardware::new(MIDI_BAUD_RATE.into_baudrate());
@@ -119,23 +128,30 @@ fn euclidean(steps: u16, onsets: u16, rotation: i16, current_step: u16) -> bool 
 
 fn get_multiplier(hardware: &mut Hardware) -> (u16, u16) {
     let multipliers = [(1, 1), (1, 2), (1, 3), (1, 4)];
-    let idx = map_analog_value(hardware.mux_read(U4::ZERO), multipliers.len() as u16);
+    let idx = map_analog_value(
+        hardware.mux_read(MULTIPLIER_CHANNEL),
+        multipliers.len() as u16,
+    );
     multipliers[idx as usize]
 }
 
 fn get_levels(hardware: &mut Hardware) -> (u8, u8) {
-    let reading = map_range(hardware.mux_read(U4::ONE) as u32, ANALOG_IN_MAX.into(), 255);
+    let reading = map_range(
+        hardware.mux_read(LEVELS_CHANNEL) as u32,
+        ANALOG_IN_MAX.into(),
+        255,
+    );
     let on = clamp(255 - reading, 0, 127);
     let off = clamp(reading, 0, 127);
     (on as u8, off as u8)
 }
 
 fn get_num_steps(hardware: &mut Hardware) -> u16 {
-    map_analog_value(hardware.mux_read(U4::TWO), MAX_STEPS)
+    map_analog_value(hardware.mux_read(STEPS_CHANNEL), MAX_STEPS)
 }
 
 fn get_num_onsets(hardware: &mut Hardware) -> u16 {
-    map_analog_value(hardware.mux_read(U4::THREE), MAX_STEPS)
+    map_analog_value(hardware.mux_read(ONSETS_CHANNEL), MAX_STEPS)
 }
 
 fn get_step(
