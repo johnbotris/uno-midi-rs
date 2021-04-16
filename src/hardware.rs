@@ -1,24 +1,18 @@
-use arduino_uno::hal::port::portc::{PC0, PC1, PC2, PC3};
+use arduino_uno::hal::port::portc::PC0;
+use arduino_uno::hal::port::portd::{PD0, PD1, PD2, PD3, PD4, PD5};
 use arduino_uno::prelude::*;
 use arduino_uno::{adc::Adc, pac::TC0, Serial};
 use arduino_uno::{Peripherals, Pins};
 use avr_hal_generic::{
     clock::MHz16,
-    port::mode::{Analog, Floating},
+    port::mode::{Analog, Floating, Output},
     usart::Baudrate,
 };
-use uno_mux::{Multiplexer, U4};
+use uno_mux::{u4::U4, Multiplexer};
 
 type SerialType = Serial<Floating>;
 
-type Mux = Multiplexer<
-    PD0<Input<Floating>>,
-    PD1<Input<Floating>>,
-    PD2<Input<Floating>>,
-    PD3<Input<Floating>>,
-    PC0<Input<Analog>>,
-    (),
->;
+type Mux = Multiplexer<PD2<Output>, PD3<Output>, PD4<Output>, PD5<Output>, PC0<Analog>, ()>;
 
 pub struct Hardware {
     adc: Adc,
@@ -34,10 +28,10 @@ impl Hardware {
         let mut adc = Adc::new(dp.ADC, Default::default());
 
         let mux = Mux::new(
-            pins.d0.into_output(&mut pins.ddr),
-            pins.d1.into_output(&mut pins.ddr),
             pins.d2.into_output(&mut pins.ddr),
             pins.d3.into_output(&mut pins.ddr),
+            pins.d4.into_output(&mut pins.ddr),
+            pins.d5.into_output(&mut pins.ddr),
             pins.a0.into_analog_input(&mut adc),
             (),
         );
@@ -65,8 +59,8 @@ impl Hardware {
         self.serial.write_byte(byte)
     }
 
-    pub fn mux_read(&mut self, channel: U4) -> &mut Mux {
-        nb::block!(self.adc.read(self.mux.pin(channel)))
+    pub fn mux_read(&mut self, channel: U4) -> u16 {
+        nb::block!(self.adc.read(&mut self.mux.pin(channel).unwrap())).void_unwrap()
     }
 }
 

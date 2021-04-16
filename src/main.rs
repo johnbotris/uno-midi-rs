@@ -7,16 +7,13 @@ mod millis;
 
 extern crate ufmt;
 
-use core::{
-    cell::RefCell,
-    ops::{Div, Mul},
-};
+use core::ops::{Div, Mul};
 
 use arduino_uno::prelude::*;
 use hardware::*;
 use millis::*;
 
-use uno_mux::U4;
+use uno_mux::u4::U4;
 
 const DEFAULT_BAUD_RATE: u32 = 9600;
 const MIDI_BAUD_RATE: u32 = 31250;
@@ -25,78 +22,20 @@ const MAX_STEPS: u16 = 16;
 
 #[arduino_uno::entry]
 fn main() -> ! {
-    let hardware: RefCell<Hardware> = RefCell::new(Hardware::new(MIDI_BAUD_RATE.into_baudrate()));
+    let mut hardware: Hardware = Hardware::new(MIDI_BAUD_RATE.into_baudrate());
 
-    millis_init(hardware.borrow_mut().tc0());
+    millis_init(hardware.tc0());
 
     let rotation = 0;
     let channel = 0;
     let bpm = 120.0;
 
-    let get_multiplier = {
-        || {
-            let multipliers = [(1, 1), (1, 2), (1, 3), (1, 4)];
-            let idx = map_analog_value(
-                hardware.borrow_mut().mux_read(U4::ZERO),
-                multipliers.len() as u16,
-            );
-            multipliers[idx as usize]
-        }
-    };
-
-    let get_levels = || {
-        let reading = map_range(
-            hardware.borrow_mut().mux_read(U4::ONE) as u32,
-            ANALOG_IN_MAX,
-            255,
-        );
-
-        let on = clamp(255 - reading, 0, 127);
-        let off = clamp(reading, 0, 127);
-
-        (on, off)
-    };
-
-    let get_num_steps = || map_analog_value(hardware.borrow_mut().mux_read(U4::TWO), MAX_STEPS);
-
-    let get_num_onsets = || map_analog_value(hardware.borrow_mut().mux_read(U4::THREE), MAX_STEPS);
-
-    let get_step = |num_steps, num_onsets, current_step| {
-        let (on_level, off_level) = get_levels();
-        let is_on = euclidean(num_steps, num_onsets, 0, current_step);
-        if is_on {
-            StepParams {
-                pitch: 30,
-                velocity: on_level,
-                gate: 0.5,
-            }
-        } else {
-            StepParams {
-                pitch: 42,
-                velocity: off_level,
-                gate: 0.5,
-            }
-        }
-    };
-
-    let note_on = |pitch, velocity| {
-        let mut hardware = hardware.borrow_mut();
-        hardware.write_byte(0x90 + channel);
-        hardware.write_byte(pitch);
-        hardware.write_byte(velocity);
-    };
-
-    let mut note_off = |pitch| {
-        let mut hardware = hardware.borrow_mut();
-        hardware.write_byte(0x80 + channel);
-        hardware.write_byte(pitch);
-        hardware.write_byte(0);
-    };
-
     // Do first step straight away
     let mut previous_step_params = {
-        let step = get_step(get_num_steps(), get_num_onsets(), 0);
-        note_on(step.pitch, step.velocity);
+        let num_steps = get_num_steps(&mut hardware);
+        let num_onsets = get_num_onsets(&mut hardware);
+        let step = get_step(&mut hardware, num_steps, num_onsets, 0);
+        note_on(&mut hardware, channel, step.pitch, step.velocity);
         step
     };
 
@@ -107,15 +46,15 @@ fn main() -> ! {
     loop {
         let now = millis();
 
-        let multiplier = get_multiplier();
+        let multiplier = get_multiplier(&mut hardware);
         let beats_per_second = bpm / 60.0;
         let beat_length_ms = 1000.0 / beats_per_second;
         let step_length_ms = beat_length_ms as u16 * multiplier.0 / multiplier.1;
 
         if now - step_start_ms >= step_length_ms as u32 {
             // At the first step, read in all inputs and recalculate parameters
-            let num_steps = get_num_steps();
-            let num_onsets = get_num_onsets();
+            let num_steps = get_num_steps(&mut hardware);
+            let num_onsets = get_num_onsets(&mut hardware);
             step_start_ms = now;
             step_counter = if num_steps > 0 {
                 (step_counter + 1) % num_steps
@@ -124,11 +63,16 @@ fn main() -> ! {
             };
 
             // TODO send note_off after gate closed rather than on the next step
-            note_off(previous_step_params.pitch);
+            note_off(&mut hardware, channel, previous_step_params.pitch);
 
             // Do euclidean rhythm algorithm
-            let this_step_params = get_step(num_steps, num_onsets, step_counter);
-            note_on(this_step_params.pitch, this_step_params.velocity);
+            let this_step_params = get_step(&mut hardware, num_steps, num_onsets, step_counter);
+            note_on(
+                &mut hardware,
+                channel,
+                this_step_params.pitch,
+                this_step_params.velocity,
+            );
 
             // ufmt::uwrite!(hardware.borrow_mut(), "\r                                                                                                                       \r");
             // ufmt::uwrite!(
@@ -173,10 +117,68 @@ fn euclidean(steps: u16, onsets: u16, rotation: i16, current_step: u16) -> bool 
     }
 }
 
-fn clamp<T>(val: T, low: T, hi: T) -> T {
-    if val < lo {
+fn get_multiplier(hardware: &mut Hardware) -> (u16, u16) {
+    let multipliers = [(1, 1), (1, 2), (1, 3), (1, 4)];
+    let idx = map_analog_value(hardware.mux_read(U4::ZERO), multipliers.len() as u16);
+    multipliers[idx as usize]
+}
+
+fn get_levels(hardware: &mut Hardware) -> (u8, u8) {
+    let reading = map_range(hardware.mux_read(U4::ONE) as u32, ANALOG_IN_MAX.into(), 255);
+    let on = clamp(255 - reading, 0, 127);
+    let off = clamp(reading, 0, 127);
+    (on as u8, off as u8)
+}
+
+fn get_num_steps(hardware: &mut Hardware) -> u16 {
+    map_analog_value(hardware.mux_read(U4::TWO), MAX_STEPS)
+}
+
+fn get_num_onsets(hardware: &mut Hardware) -> u16 {
+    map_analog_value(hardware.mux_read(U4::THREE), MAX_STEPS)
+}
+
+fn get_step(
+    hardware: &mut Hardware,
+    num_steps: u16,
+    num_onsets: u16,
+    current_step: u16,
+) -> StepParams {
+    let (on_level, off_level) = get_levels(hardware);
+    let is_on = euclidean(num_steps, num_onsets, 0, current_step);
+    if is_on {
+        StepParams {
+            pitch: 30,
+            velocity: on_level,
+            gate: 0.5,
+        }
+    } else {
+        StepParams {
+            pitch: 42,
+            velocity: off_level,
+            gate: 0.5,
+        }
+    }
+}
+fn note_on(hardware: &mut Hardware, channel: u8, pitch: u8, velocity: u8) {
+    hardware.write_byte(0x90 + channel);
+    hardware.write_byte(pitch);
+    hardware.write_byte(velocity);
+}
+
+fn note_off(hardware: &mut Hardware, channel: u8, pitch: u8) {
+    hardware.write_byte(0x80 + channel);
+    hardware.write_byte(pitch);
+    hardware.write_byte(0);
+}
+
+fn clamp<T>(val: T, low: T, high: T) -> T
+where
+    T: PartialOrd,
+{
+    if val <= low {
         low
-    } else if val > hi {
+    } else if val >= high {
         high
     } else {
         val
