@@ -8,7 +8,6 @@
 //!
 //!     https://blog.rahix.de/005-avr-hal-millis/
 
-use arduino_uno::prelude::*;
 use core::cell;
 
 // Possible Values:

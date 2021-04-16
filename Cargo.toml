@@ -19,6 +19,9 @@ rev = "a20277873a8102998d5fd69743771bd8c0aa9423"
 git = "https://github.com/Rahix/avr-hal"
 rev = "a20277873a8102998d5fd69743771bd8c0aa9423"
 
+[dependencies.uno_mux]
+path = "../uno_mux"
+
 [profile.dev]
 panic = "abort"
 lto = true

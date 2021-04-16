@@ -7,18 +7,23 @@ use avr_hal_generic::{
     port::mode::{Analog, Floating},
     usart::Baudrate,
 };
-use ufmt::{uDisplay, Formatter};
+use uno_mux::{Multiplexer, U4};
 
 type SerialType = Serial<Floating>;
+
+type Mux = Multiplexer<
+    PD0<Input<Floating>>,
+    PD1<Input<Floating>>,
+    PD2<Input<Floating>>,
+    PD3<Input<Floating>>,
+    PC0<Input<Analog>>,
+    (),
+>;
 
 pub struct Hardware {
     adc: Adc,
     serial: SerialType,
-
-    a0: PC0<Analog>,
-    a1: PC1<Analog>,
-    a2: PC2<Analog>,
-    a3: PC3<Analog>,
+    mux: Mux,
     tc0: TC0,
 }
 
@@ -28,10 +33,14 @@ impl Hardware {
         let mut pins = Pins::new(dp.PORTB, dp.PORTC, dp.PORTD);
         let mut adc = Adc::new(dp.ADC, Default::default());
 
-        let a0 = pins.a0.into_analog_input(&mut adc);
-        let a1 = pins.a1.into_analog_input(&mut adc);
-        let a2 = pins.a2.into_analog_input(&mut adc);
-        let a3 = pins.a3.into_analog_input(&mut adc);
+        let mux = Mux::new(
+            pins.d0.into_output(&mut pins.ddr),
+            pins.d1.into_output(&mut pins.ddr),
+            pins.d2.into_output(&mut pins.ddr),
+            pins.d3.into_output(&mut pins.ddr),
+            pins.a0.into_analog_input(&mut adc),
+            (),
+        );
 
         let serial = Serial::new(
             dp.USART0,
@@ -43,28 +52,9 @@ impl Hardware {
         Self {
             adc,
             serial,
-            a0,
-            a1,
-            a2,
-            a3,
+            mux,
             tc0: dp.TC0,
         }
-    }
-
-    pub fn read_a0(&mut self) -> u16 {
-        nb::block!(self.adc.read(&mut self.a0)).void_unwrap()
-    }
-
-    pub fn read_a1(&mut self) -> u16 {
-        nb::block!(self.adc.read(&mut self.a1)).void_unwrap()
-    }
-
-    pub fn read_a2(&mut self) -> u16 {
-        nb::block!(self.adc.read(&mut self.a2)).void_unwrap()
-    }
-
-    pub fn read_a3(&mut self) -> u16 {
-        nb::block!(self.adc.read(&mut self.a3)).void_unwrap()
     }
 
     pub fn tc0(&mut self) -> &mut TC0 {
@@ -73,6 +63,10 @@ impl Hardware {
 
     pub fn write_byte(&mut self, byte: u8) {
         self.serial.write_byte(byte)
+    }
+
+    pub fn mux_read(&mut self, channel: U4) -> &mut Mux {
+        nb::block!(self.adc.read(self.mux.pin(channel)))
     }
 }
 

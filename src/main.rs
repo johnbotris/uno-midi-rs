@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
-// required by millis
-#![feature(abi_avr_interrupt)]
+#![feature(abi_avr_interrupt)] // required by millis
 
 mod hardware;
 mod millis;
@@ -13,18 +12,11 @@ use core::{
     ops::{Div, Mul},
 };
 
-use arduino_uno::adc::{self, Adc};
-use arduino_uno::hal::port::mode::Output;
-use arduino_uno::hal::port::portb::PB5;
 use arduino_uno::prelude::*;
-use arduino_uno::{delay_ms, Peripherals, Pins, Serial};
-use avr_hal_generic::{
-    port::mode::Floating,
-    usart::{Usart, UsartOps},
-};
-
 use hardware::*;
 use millis::*;
+
+use uno_mux::U4;
 
 const DEFAULT_BAUD_RATE: u32 = 9600;
 const MIDI_BAUD_RATE: u32 = 31250;
@@ -33,8 +25,7 @@ const MAX_STEPS: u16 = 16;
 
 #[arduino_uno::entry]
 fn main() -> ! {
-    let mut hardware: RefCell<Hardware> =
-        RefCell::new(Hardware::new(MIDI_BAUD_RATE.into_baudrate()));
+    let hardware: RefCell<Hardware> = RefCell::new(Hardware::new(MIDI_BAUD_RATE.into_baudrate()));
 
     millis_init(hardware.borrow_mut().tc0());
 
@@ -42,45 +33,35 @@ fn main() -> ! {
     let channel = 0;
     let bpm = 120.0;
 
-    let mut get_multiplier = {
+    let get_multiplier = {
         || {
             let multipliers = [(1, 1), (1, 2), (1, 3), (1, 4)];
-            let idx = map_analog_value(hardware.borrow_mut().read_a0(), multipliers.len() as u16);
+            let idx = map_analog_value(
+                hardware.borrow_mut().mux_read(U4::ZERO),
+                multipliers.len() as u16,
+            );
             multipliers[idx as usize]
         }
     };
-    let mut get_levels = || {
-        let half_analog_limit = 1024 / 2;
-        let reading = hardware.borrow_mut().read_a1();
 
-        // pot further to the left:  on is max, off is max - half_analog_limit - reading
-        // pot further to the right: off is max, on is max - reading - half_analog_limit
-        // pot in the middle: both on and off have the same level (for simplicity we include this in "further to the left"
+    let get_levels = || {
+        let reading = map_range(
+            hardware.borrow_mut().mux_read(U4::ONE) as u32,
+            ANALOG_IN_MAX,
+            255,
+        );
 
-        if reading < half_analog_limit {
-            // further to the left
-            (
-                127u8,
-                // this just falls short of u16::MAX, be careful
-                127 - map_range(half_analog_limit - reading, half_analog_limit, 127) as u8,
-            )
-        } else if reading > half_analog_limit {
-            // further to the right
-            (
-                127 - map_range(reading - half_analog_limit, half_analog_limit, 127) as u8,
-                127u8,
-            )
-        } else {
-            // the same
-            (127u8, 127u8)
-        }
+        let on = clamp(255 - reading, 0, 127);
+        let off = clamp(reading, 0, 127);
+
+        (on, off)
     };
 
-    let mut get_num_steps = || map_analog_value(hardware.borrow_mut().read_a2(), MAX_STEPS);
+    let get_num_steps = || map_analog_value(hardware.borrow_mut().mux_read(U4::TWO), MAX_STEPS);
 
-    let mut get_num_onsets = || map_analog_value(hardware.borrow_mut().read_a3(), MAX_STEPS);
+    let get_num_onsets = || map_analog_value(hardware.borrow_mut().mux_read(U4::THREE), MAX_STEPS);
 
-    let mut get_step = |num_steps, num_onsets, current_step| {
+    let get_step = |num_steps, num_onsets, current_step| {
         let (on_level, off_level) = get_levels();
         let is_on = euclidean(num_steps, num_onsets, 0, current_step);
         if is_on {
@@ -98,7 +79,7 @@ fn main() -> ! {
         }
     };
 
-    let mut note_on = |pitch, velocity| {
+    let note_on = |pitch, velocity| {
         let mut hardware = hardware.borrow_mut();
         hardware.write_byte(0x90 + channel);
         hardware.write_byte(pitch);
@@ -192,6 +173,16 @@ fn euclidean(steps: u16, onsets: u16, rotation: i16, current_step: u16) -> bool 
     }
 }
 
+fn clamp<T>(val: T, low: T, hi: T) -> T {
+    if val < lo {
+        low
+    } else if val > hi {
+        high
+    } else {
+        val
+    }
+}
+
 fn map_range<T>(val: T, from: T, to: T) -> T
 where
     T: Mul + Mul<Output = T> + Div + Div<Output = T>,
@@ -210,9 +201,9 @@ struct StepParams {
 }
 
 #[panic_handler]
-fn panic(info: &core::panic::PanicInfo) -> ! {
-    let mut serial: arduino_uno::Serial<arduino_uno::hal::port::mode::Floating> =
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() };
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    // let mut serial: arduino_uno::Serial<arduino_uno::hal::port::mode::Floating> =
+    //     unsafe { core::mem::MaybeUninit::uninit().assume_init() };
 
     // ufmt::uwriteln!(&mut serial, "Firmware panic!\r").void_unwrap();
 
